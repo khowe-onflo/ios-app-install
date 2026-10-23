@@ -27,6 +27,8 @@ def signing_info(raw):
         "profile": prov.get("Name"),
         "team": prov.get("TeamName"),
         "devices": len(devices) if devices is not None else None,
+        # Already public inside the .ipa's profile; listed so the page can check whether a device is included.
+        "udids": sorted(devices) if devices is not None else None,
         "profile_expires": expires.isoformat() + "Z" if expires else None,
     }
 

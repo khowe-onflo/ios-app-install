@@ -9,11 +9,13 @@
   :root {
     --bg: #f6f7f9; --card: #fff; --text: #1a1d21; --muted: #667085; --line: #e4e7ec;
     --accent: #0a6cff; --accent-text: #fff; --danger: #d92d20; --warn-bg: #fff4e5; --warn: #9a5b00;
+    --ok: #067647; --ok-bg: #ecfdf3; --bad-bg: #fef3f2; --mark: #fff1a8;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #98a2b3; --line: #2a2f37;
       --accent: #4c94ff; --danger: #f97066; --warn-bg: #2d2210; --warn: #f5b74f;
+      --ok: #47cd89; --ok-bg: #0d2a1c; --bad-bg: #2d1513; --mark: #5c4d00;
     }
   }
   * { box-sizing: border-box; }
@@ -32,7 +34,9 @@
   .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   .danger { color: var(--danger); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .build { transition: opacity .15s; }
   .build.focus { border-color: var(--accent); }
+  .build.nomatch { opacity: .55; }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .sub, .meta, .muted { color: var(--muted); }
   .sub { margin: 2px 0 0; font-size: 14px; word-break: break-all; }
@@ -44,15 +48,52 @@
   .qr img, .qr canvas { display: inline-block; background: #fff; padding: 10px; border-radius: 8px; }
   .qr p { font-size: 13px; color: var(--muted); }
   body:not(.admin) .admin-only { display: none !important; }
+  input[type=password], input[type=search] {
+    flex: 1; min-width: 200px; padding: 8px 10px; border-radius: 8px; width: 100%;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit;
+  }
   #manage .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  #manage input[type=password] { flex: 1; min-width: 200px; padding: 8px 10px; border-radius: 8px;
-         border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
   .drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px;
           text-align: center; cursor: pointer; color: var(--muted); }
   .drop.over { border-color: var(--accent); color: var(--accent); }
+  .drop.busy { pointer-events: none; opacity: .5; }
   #status { min-height: 1.4em; margin: 12px 0 0; font-size: 14px; }
   #status.error { color: var(--danger); }
   .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* upload progress */
+  #progress { margin-top: 14px; }
+  .bar { height: 10px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .fill { height: 100%; width: 0; background: var(--accent); border-radius: 99px; transition: width .5s ease; }
+  .fill.failed { background: var(--danger); }
+  .fill.complete { background: var(--ok); }
+  .eta { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .eta strong { color: var(--text); }
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .steps li { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px; padding: 5px 0; font-size: 14px; }
+  .steps li.todo { color: var(--muted); }
+  .steps li.failed { color: var(--danger); }
+  .steps .note { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .icon { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line);
+          display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+  .done .icon { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .failed .icon { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .active .icon { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .active .icon { animation: none; border-top-color: var(--accent); } }
+
+  /* device check */
+  #device-check label { display: block; font-weight: 600; margin-bottom: 6px; }
+  #udid-summary { margin: 8px 0 0; font-size: 13px; min-height: 1.2em; }
+  .device-result { font-size: 13px; padding: 8px 12px; border-radius: 8px; margin: 0 0 12px; word-break: break-all; }
+  .device-result.yes { background: var(--ok-bg); color: var(--ok); }
+  .device-result.no { background: var(--bad-bg); color: var(--danger); }
+  .device-result.na { background: var(--bg); color: var(--muted); }
+  .devices { margin-top: 12px; }
+  .devices ol { margin: 0; padding-left: 28px; font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+                max-height: 260px; overflow: auto; word-break: break-all; }
+  .devices li.hit { font-weight: 700; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -72,7 +113,15 @@
       <input id="file" type="file" accept=".ipa" hidden>
       <strong>Drop an .ipa here</strong> or click to choose (max 100 MB)
     </label>
+    <div id="progress" hidden></div>
     <p id="status"></p>
+  </section>
+
+  <section id="device-check" class="card">
+    <label for="udid">Check a device</label>
+    <input id="udid" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Paste a UDID, or part of one, to see which builds include it">
+    <p id="udid-summary" class="muted"></p>
   </section>
 
   <p id="filter-note" class="muted" hidden>Showing one build. <a href="./">Show all builds</a></p>
@@ -81,6 +130,7 @@
 
 <script>
 const TOKEN_KEY = "ota-gh-token";
+const UDID_KEY = "ota-udid-query";
 const API = "https://api.github.com";
 const MAX_BYTES = 100 * 1024 * 1024; // git blob API limit
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
@@ -99,6 +149,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function fmtSize(bytes) {
   return bytes > 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.round(bytes / 1e3)} KB`;
+}
+function fmtDur(secs) {
+  secs = Math.max(0, Math.round(secs));
+  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, "0")}s`;
 }
 function fmtAgo(iso) {
   const s = (Date.now() - new Date(iso)) / 1000;
@@ -139,6 +193,7 @@ function render() {
   $("filter-note").hidden = !focusTag;
   if (!list.length) {
     $("builds").innerHTML = `<p class="empty">${focusTag ? "That build was deleted or doesn't exist." : "No builds yet."}</p>`;
+    updateDeviceCheck();
     return;
   }
   $("builds").innerHTML = list.map((b) => {
@@ -160,38 +215,133 @@ function render() {
         </div>
         <p class="meta">${esc(meta)}</p>
         ${warnings(b)}
+        <p class="device-result" hidden></p>
         <div class="actions">
           <a class="btn primary" href="${esc(installLink(b.tag))}">Install</a>
           <button data-act="qr">QR code</button>
           <button data-act="copy">Copy link</button>
+          ${b.udids?.length ? `<button data-act="devices">Devices (${b.udids.length})</button>` : ""}
           <button data-act="delete" class="danger admin-only">Delete</button>
         </div>
         <div class="qr" hidden></div>
+        <div class="devices" hidden><ol></ol></div>
       </article>`;
   }).join("");
+  updateDeviceCheck();
+}
+
+// ---- device (UDID) check ----
+
+const normUdid = (s) => String(s || "").toLowerCase().replace(/[^0-9a-f]/g, "");
+
+// Wrap the part of a UDID that matches the normalized query in <mark>, ignoring hyphens.
+function highlight(udid, q) {
+  if (!q) return esc(udid);
+  const map = [];
+  let flat = "";
+  [...udid].forEach((ch, i) => { if (/[0-9a-f]/i.test(ch)) { map.push(i); flat += ch.toLowerCase(); } });
+  const at = flat.indexOf(q);
+  if (at < 0) return esc(udid);
+  const start = map[at], end = map[at + q.length - 1] + 1;
+  return `${esc(udid.slice(0, start))}<mark>${esc(udid.slice(start, end))}</mark>${esc(udid.slice(end))}`;
+}
+
+function deviceStatus(b, q) {
+  if (b.signing === "enterprise") return { cls: "yes", match: true, html: "✓ Enterprise build: installs on any device." };
+  if (b.signing === "app-store") return { cls: "no", match: false, html: "✕ App Store–signed: can't be installed from a link." };
+  if (!Array.isArray(b.udids)) return { cls: "na", match: null, html: "Device list not available for this build. Re-upload it to enable the check." };
+  const hits = b.udids.filter((u) => normUdid(u).includes(q));
+  const exact = hits.find((u) => normUdid(u) === q);
+  if (exact) return { cls: "yes", match: true, hits, html: `✓ This device is in the profile: ${highlight(exact, q)}` };
+  if (hits.length) {
+    return { cls: "yes", match: true, hits,
+      html: `${hits.length} device${hits.length === 1 ? "" : "s"} match: ${hits.slice(0, 3).map((u) => highlight(u, q)).join(", ")}${hits.length > 3 ? ", …" : ""}` };
+  }
+  return { cls: "no", match: false, html: "✕ This device is not in this build's profile." };
+}
+
+function updateDeviceCheck() {
+  const raw = $("udid").value;
+  const q = normUdid(raw);
+  try { localStorage.setItem(UDID_KEY, raw); } catch {}
+  const active = q.length >= 4;
+  let yes = 0, total = 0;
+
+  document.querySelectorAll(".build").forEach((card) => {
+    const b = config.builds.find((x) => x.tag === card.dataset.tag);
+    const box = card.querySelector(".device-result");
+    card.classList.remove("nomatch");
+    card.querySelectorAll(".devices li").forEach((li) => {
+      li.classList.toggle("hit", active && normUdid(li.dataset.udid).includes(q));
+      li.innerHTML = highlight(li.dataset.udid, active ? q : "");
+    });
+    if (!active) { box.hidden = true; return; }
+    const st = deviceStatus(b, q);
+    box.hidden = false;
+    box.className = `device-result ${st.cls}`;
+    box.innerHTML = st.html;
+    if (st.match !== null) total++;
+    if (st.match) yes++;
+    if (st.match === false) card.classList.add("nomatch");
+  });
+
+  const summary = $("udid-summary");
+  if (!raw.trim()) summary.textContent = "";
+  else if (!active) summary.textContent = "Keep typing: enter at least 4 characters.";
+  else summary.textContent = total ? `Found in ${yes} of ${total} build${total === 1 ? "" : "s"}.` : "";
+}
+
+function toggleDevices(card, build) {
+  const box = card.querySelector(".devices");
+  if (box.hidden && !box.querySelector("li")) {
+    box.querySelector("ol").innerHTML = build.udids.map((u) => `<li data-udid="${esc(u)}">${esc(u)}</li>`).join("");
+    updateDeviceCheck();
+  }
+  box.hidden = !box.hidden;
 }
 
 // ---- GitHub API (only used by the owner, with their token) ----
 
+function apiError(status, method, path, message) {
+  const where = `${method} ${path.replace(/^\/repos\/[^/]+\/[^/]+/, "")}`;
+  const err = new Error(`GitHub ${status} on ${where}: ${message}`);
+  err.status = status;
+  return err;
+}
+
+const authHeaders = () => ({
+  Authorization: `Bearer ${token}`,
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+});
+
 async function gh(path, { method = "GET", body, allow = [] } = {}) {
   const res = await fetch(API + path, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
+    headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok && !allow.includes(res.status)) {
-    const where = `${method} ${path.replace(/^\/repos\/[^/]+\/[^/]+/, "")}`;
-    const err = new Error(`GitHub ${res.status} on ${where}: ${data?.message || res.statusText}`);
-    err.status = res.status;
-    throw err;
-  }
+  if (!res.ok && !allow.includes(res.status)) throw apiError(res.status, method, path, data?.message || res.statusText);
   return { status: res.status, data };
+}
+
+// Same as gh() for a POST, but via XHR so we get upload progress events.
+function ghUpload(path, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", API + path);
+    Object.entries({ ...authHeaders(), "Content-Type": "application/json" }).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded, e.total);
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(apiError(xhr.status, "POST", path, data?.message || xhr.statusText));
+    };
+    xhr.onerror = () => reject(new Error("Network error while uploading"));
+    xhr.send(JSON.stringify(body));
+  });
 }
 
 function readBase64(file) {
@@ -203,6 +353,145 @@ function readBase64(file) {
   });
 }
 
+// ---- upload progress ----
+
+const STAGES = [
+  { id: "upload", label: "Upload file" },
+  { id: "save", label: "Save to GitHub" },
+  { id: "publish", label: "Publish release" },
+  { id: "deploy", label: "Deploy site" },
+  { id: "live", label: "Go live" },
+];
+
+// Typical durations (seconds) of the two workflow runs, from recent successful runs.
+async function runEstimates() {
+  const est = { publish: 30, deploy: 45 };
+  try {
+    const runs = (await gh(`/repos/${config.repo}/actions/workflows/ota.yml/runs?status=success&per_page=30`)).data.workflow_runs;
+    const median = (xs) => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const dur = (r) => (new Date(r.updated_at) - new Date(r.created_at)) / 1000;
+    const ingest = runs.filter((r) => r.head_branch === "upload").map(dur);
+    const deploy = runs.filter((r) => r.event === "workflow_dispatch").map(dur);
+    if (ingest.length) est.publish = median(ingest);
+    if (deploy.length) est.deploy = median(deploy);
+  } catch {}
+  return est;
+}
+
+class Progress {
+  constructor(file, est) {
+    this.est = { upload: (file.size * 1.34) / 4e6, save: 4, publish: est.publish, deploy: est.deploy, live: 10 };
+    this.state = Object.fromEntries(STAGES.map((s) => [s.id, "todo"]));
+    this.notes = {};
+    this.took = {};
+    this.started = Date.now();
+    this.footer = "";
+    $("progress").hidden = false;
+    this.timer = setInterval(() => this.draw(), 500);
+    this.draw();
+  }
+  start(id, note = "") {
+    this.current = id;
+    this.stageStart = Date.now();
+    this.fraction = null;
+    this.state[id] = "active";
+    this.notes[id] = note;
+    this.draw();
+  }
+  note(id, text) { this.notes[id] = text; }
+  uploadProgress(loaded, total) {
+    const secs = (Date.now() - this.stageStart) / 1000;
+    this.fraction = loaded / total;
+    if (secs > 1 && this.fraction > 0.02) {
+      this.est.upload = (secs / this.fraction);
+      const rate = loaded / secs;
+      this.notes.upload = loaded >= total
+        ? "Finishing…"
+        : `${fmtSize(loaded / 1.34)} / ${fmtSize(total / 1.34)} · ${fmtSize(rate / 1.34)}/s`;
+    }
+  }
+  done(id, note) {
+    this.state[id] = "done";
+    this.took[id] = (Date.now() - this.stageStart) / 1000;
+    this.est[id] = this.took[id];
+    this.notes[id] = note ?? fmtDur(this.took[id]);
+    this.draw();
+  }
+  fail(id, html) {
+    this.state[id] = "failed";
+    this.failed = true;
+    this.footer = html;
+    this.stop();
+  }
+  finish(html) {
+    this.complete = true;
+    this.footer = html;
+    this.stop();
+  }
+  stop() { clearInterval(this.timer); this.draw(); }
+
+  draw() {
+    const ids = STAGES.map((s) => s.id);
+    const total = ids.reduce((sum, id) => sum + this.est[id], 0);
+    let doneSecs = 0, remaining = 0, slow = false;
+    for (const id of ids) {
+      if (this.state[id] === "done") doneSecs += this.est[id];
+      else if (this.state[id] === "active") {
+        const elapsed = (Date.now() - this.stageStart) / 1000;
+        const frac = this.fraction ?? Math.min(elapsed / this.est[id], 0.95);
+        doneSecs += this.est[id] * frac;
+        remaining += Math.max(this.est[id] - elapsed, this.est[id] * (1 - frac));
+        slow = this.fraction == null && elapsed > this.est[id] * 1.5;
+      } else remaining += this.est[id];
+    }
+    const pct = this.complete ? 100 : Math.min(99, Math.round((doneSecs / total) * 100));
+    const elapsed = fmtDur((Date.now() - this.started) / 1000);
+    const left = this.complete ? "Done"
+      : this.failed ? "Stopped"
+      : slow ? "Taking longer than usual…"
+      : `About ${fmtDur(remaining)} left`;
+    const icon = { done: "✓", failed: "✕", active: "", todo: "" };
+
+    $("progress").innerHTML = `
+      <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+        <div class="fill${this.failed ? " failed" : this.complete ? " complete" : ""}" style="width:${this.failed ? 100 : pct}%"></div>
+      </div>
+      <div class="eta"><span><strong>${pct}%</strong> · ${left}</span><span>${elapsed} elapsed</span></div>
+      <ol class="steps">
+        ${STAGES.map((s) => `
+          <li class="${this.state[s.id]}">
+            <span class="icon">${icon[this.state[s.id]]}</span>
+            <span>${s.label}</span>
+            <span class="note">${esc(this.notes[s.id] || "")}</span>
+          </li>`).join("")}
+      </ol>`;
+    setStatus(this.footer, this.failed);
+  }
+}
+
+async function currentStepName(run) {
+  try {
+    const jobs = (await gh(`/repos/${config.repo}/actions/runs/${run.id}/jobs`)).data.jobs;
+    const job = jobs.find((j) => j.status === "in_progress");
+    const step = job?.steps?.find((s) => s.status === "in_progress");
+    return step ? step.name.replace(/^Run /, "") : "Running…";
+  } catch { return "Running…"; }
+}
+
+// Poll until find() returns a completed run, keeping the stage note up to date.
+async function watchRun(find, p, stage, timeoutMs = 10 * 60 * 1000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const run = await find().catch(() => null);
+    if (run?.status === "completed") return run;
+    p.note(stage, !run ? "Waiting for Actions to start…"
+      : run.status === "in_progress" ? await currentStepName(run)
+      : "Queued, waiting for a runner…");
+    await sleep(3000);
+  }
+  throw new Error(`${stage} timed out`);
+}
+
 async function upload(file) {
   if (!token) return setStatus("Save a GitHub token first.", true);
   if (!config.repo) return setStatus("builds.json has no repo — run the OTA workflow once first.", true);
@@ -210,18 +499,36 @@ async function upload(file) {
   if (file.size > MAX_BYTES) return setStatus(`${esc(file.name)} is ${fmtSize(file.size)}; GitHub's API limit is 100 MB.`, true);
 
   const repo = config.repo;
+  const actionsLink = (url = `https://github.com/${repo}/actions`) =>
+    `<a href="${esc(url)}" target="_blank" rel="noopener">view the run</a>`;
+  $("drop").classList.add("busy");
+  const leaveGuard = (e) => { e.preventDefault(); e.returnValue = ""; };
+  window.addEventListener("beforeunload", leaveGuard);
+
+  const p = new Progress(file, await runEstimates());
+  let stage = "upload";
   try {
-    setStatus(`Uploading ${esc(file.name)} (${fmtSize(file.size)})…`);
+    p.start("upload", "Reading file…");
     // Stack onto the upload branch if a previous upload is still being processed, else start from the default branch.
     const existing = await gh(`/repos/${repo}/git/ref/heads/upload`, { allow: [404] });
     const parent = existing.status === 404
       ? (await gh(`/repos/${repo}/git/ref/heads/${config.branch}`)).data.object.sha
       : existing.data.object.sha;
     const parentCommit = (await gh(`/repos/${repo}/git/commits/${parent}`)).data;
+    const content = await readBase64(file);
+    p.note("upload", "Starting…");
+    const blob = await ghUpload(`/repos/${repo}/git/blobs`, { content, encoding: "base64" },
+      (loaded, total) => p.uploadProgress(loaded, total));
+    p.done("upload");
 
-    const blob = (await gh(`/repos/${repo}/git/blobs`, {
-      method: "POST", body: { content: await readBase64(file), encoding: "base64" },
-    })).data;
+    stage = "save";
+    p.start("save");
+    const tag = `build-${blob.sha.slice(0, 12)}`;
+    if (config.builds.some((b) => b.tag === tag)) {
+      p.done("save");
+      STAGES.slice(2).forEach((s) => { p.state[s.id] = "done"; p.notes[s.id] = "skipped"; });
+      return p.finish(`This exact file is already published. <a href="${esc(pageLink(tag))}">Share link</a>`);
+    }
     const safeName = `${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
     const tree = (await gh(`/repos/${repo}/git/trees`, {
       method: "POST",
@@ -230,39 +537,64 @@ async function upload(file) {
     const commit = (await gh(`/repos/${repo}/git/commits`, {
       method: "POST", body: { message: `Upload ${file.name}`, tree: tree.sha, parents: [parent] },
     })).data;
-
     if (existing.status === 404) {
       await gh(`/repos/${repo}/git/refs`, { method: "POST", body: { ref: "refs/heads/upload", sha: commit.sha } });
     } else {
       await gh(`/repos/${repo}/git/refs/heads/upload`, { method: "PATCH", body: { sha: commit.sha } });
     }
+    p.done("save");
+    window.removeEventListener("beforeunload", leaveGuard); // GitHub finishes the rest on its own
+    p.footer = "You can close this page now; GitHub will finish the rest.";
 
-    const tag = `build-${blob.sha.slice(0, 12)}`;
-    if (config.builds.some((b) => b.tag === tag)) {
-      return setStatus("This exact file is already published.");
+    stage = "publish";
+    p.start("publish", "Waiting for Actions to start…");
+    const ingest = await watchRun(async () =>
+      (await gh(`/repos/${repo}/actions/runs?head_sha=${commit.sha}&event=push&per_page=1`)).data.workflow_runs[0], p, "publish");
+    if (ingest.conclusion !== "success") {
+      return p.fail("publish", `Publishing failed (${esc(ingest.conclusion)}). ${actionsLink(ingest.html_url)}`);
     }
-    await waitForBuild(tag, file.name);
-  } catch (err) {
-    setStatus(`Upload failed: ${esc(err.message)}. ${err.status === 403 ? TOKEN_HINT : "If another upload just finished, try again."}`, true);
-  }
-}
+    p.done("publish");
 
-async function waitForBuild(tag, name) {
-  const actions = `<a href="https://github.com/${esc(config.repo)}/actions" target="_blank" rel="noopener">Actions</a>`;
-  const started = Date.now();
-  while (Date.now() - started < 10 * 60 * 1000) {
-    const secs = Math.round((Date.now() - started) / 1000);
-    setStatus(`Uploaded. Processing ${esc(name)} on GitHub… ${secs}s (usually 1–2 min, see ${actions})`);
-    await sleep(10000);
-    try {
-      await loadBuilds();
-      if (config.builds.some((b) => b.tag === tag)) {
-        render();
-        return setStatus(`${esc(name)} is live. <a href="${esc(pageLink(tag))}">Share link</a>`);
-      }
-    } catch {}
+    // The ingest job dispatches a deploy run. A newer deploy can cancel a queued one, so follow whichever is current.
+    stage = "deploy";
+    p.start("deploy", "Waiting for Actions to start…");
+    const seen = new Set();
+    let deploy;
+    for (;;) {
+      deploy = await watchRun(async () => {
+        const runs = (await gh(`/repos/${repo}/actions/workflows/ota.yml/runs?event=workflow_dispatch&per_page=5`)).data.workflow_runs;
+        return runs.find((r) => !seen.has(r.id) && new Date(r.created_at) >= new Date(ingest.created_at));
+      }, p, "deploy");
+      if (deploy.conclusion !== "cancelled") break;
+      seen.add(deploy.id);
+    }
+    if (deploy.conclusion !== "success") {
+      return p.fail("deploy", `Deploying the site failed (${esc(deploy.conclusion)}). ${actionsLink(deploy.html_url)}`);
+    }
+    p.done("deploy");
+
+    stage = "live";
+    p.start("live", "Waiting for the site to update…");
+    const t0 = Date.now();
+    while (Date.now() - t0 < 2 * 60 * 1000) {
+      try {
+        await loadBuilds();
+        if (config.builds.some((b) => b.tag === tag)) {
+          render();
+          p.done("live");
+          return p.finish(`${esc(file.name)} is live. <a href="${esc(pageLink(tag))}">Share link</a>`);
+        }
+      } catch {}
+      await sleep(4000);
+    }
+    p.fail("live", `The site deployed but the build isn't listed; the .ipa may be unreadable. ${actionsLink(ingest.html_url)}`);
+  } catch (err) {
+    const hint = err.status === 403 ? TOKEN_HINT : "If another upload just finished, try again.";
+    p.fail(stage, `Upload failed: ${esc(err.message)}. ${hint}`);
+  } finally {
+    window.removeEventListener("beforeunload", leaveGuard);
+    $("drop").classList.remove("busy");
   }
-  setStatus(`Not live after 10 minutes. Check ${actions} for errors.`, true);
 }
 
 async function deleteBuild(build) {
@@ -314,6 +646,9 @@ drop.ondrop = (e) => {
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
 };
 
+try { $("udid").value = localStorage.getItem(UDID_KEY) || ""; } catch {}
+$("udid").oninput = updateDeviceCheck;
+
 $("builds").onclick = async (e) => {
   const btn = e.target.closest("button[data-act]");
   if (!btn) return;
@@ -330,6 +665,8 @@ $("builds").onclick = async (e) => {
     await navigator.clipboard.writeText(pageLink(build.tag));
     btn.textContent = "Copied";
     setTimeout(() => (btn.textContent = "Copy link"), 1500);
+  } else if (btn.dataset.act === "devices") {
+    toggleDevices(card, build);
   } else if (btn.dataset.act === "delete") {
     deleteBuild(build);
   }
