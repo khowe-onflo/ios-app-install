@@ -17,6 +17,7 @@ Upload an `.ipa` from the web page and get an install link and QR code a minute 
 4. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) that has access only to this repo, with these permissions:
    - **Contents:** Read and write
    - **Actions:** Read and write
+   - **Workflows:** Read and write. GitHub can require this when the page creates the `upload` branch, because that branch also contains `.github/workflows/`.
 5. On the site, click **Manage**, paste the token and click **Save**. The token is stored only in that browser.
 
 ## Limits and notes

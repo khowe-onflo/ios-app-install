@@ -94,6 +94,7 @@ try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch {}
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const TOKEN_HINT = "The token is missing a permission. It needs access to this repo with Contents, Actions and Workflows set to Read and write.";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function fmtSize(bytes) {
@@ -185,7 +186,10 @@ async function gh(path, { method = "GET", body, allow = [] } = {}) {
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok && !allow.includes(res.status)) {
-    throw new Error(`GitHub ${res.status}: ${data?.message || res.statusText}`);
+    const where = `${method} ${path.replace(/^\/repos\/[^/]+\/[^/]+/, "")}`;
+    const err = new Error(`GitHub ${res.status} on ${where}: ${data?.message || res.statusText}`);
+    err.status = res.status;
+    throw err;
   }
   return { status: res.status, data };
 }
@@ -239,7 +243,7 @@ async function upload(file) {
     }
     await waitForBuild(tag, file.name);
   } catch (err) {
-    setStatus(`Upload failed: ${esc(err.message)}. If another upload just finished, try again.`, true);
+    setStatus(`Upload failed: ${esc(err.message)}. ${err.status === 403 ? TOKEN_HINT : "If another upload just finished, try again."}`, true);
   }
 }
 
@@ -273,7 +277,7 @@ async function deleteBuild(build) {
     render();
     setStatus("Deleted. The site refreshes in a minute or two.");
   } catch (err) {
-    setStatus(`Delete failed: ${esc(err.message)}`, true);
+    setStatus(`Delete failed: ${esc(err.message)}. ${err.status === 403 ? TOKEN_HINT : ""}`, true);
   }
 }
 
