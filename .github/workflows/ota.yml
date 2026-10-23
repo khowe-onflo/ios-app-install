@@ -1,0 +1,82 @@
+name: OTA
+
+# push to "upload"  -> the web page dropped new .ipa files there; publish them as releases
+# push to main / manual run / run triggered by the page -> rebuild and deploy the Pages site
+on:
+  push:
+    branches: [main, upload]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  pages: write
+  id-token: write
+
+jobs:
+  ingest:
+    if: github.ref == 'refs/heads/upload'
+    runs-on: ubuntu-latest
+    concurrency: ota-ingest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Publish uploaded IPAs as releases
+        run: |
+          shopt -s nullglob
+          for ipa in uploads/*.ipa; do
+            # Tag is derived from the git blob sha so re-runs never publish the same file twice,
+            # and the web page can predict it to know when its upload is live.
+            tag="build-$(git hash-object "$ipa" | cut -c1-12)"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag already published, skipping"
+              continue
+            fi
+            if ! python3 scripts/ipa_info.py "$ipa" > "$RUNNER_TEMP/meta.json"; then
+              echo "::error::Could not read $ipa - is it a valid .ipa?"
+              continue
+            fi
+            title=$(jq -r '"\(.name) \(.version) (\(.build))"' "$RUNNER_TEMP/meta.json")
+            cp "$ipa" "$RUNNER_TEMP/$tag.ipa"
+            # Target the default branch, not this commit, so the tag doesn't keep the raw IPA alive in git.
+            gh release create "$tag" "$RUNNER_TEMP/$tag.ipa" \
+              --target "$DEFAULT_BRANCH" --title "$title" --notes-file "$RUNNER_TEMP/meta.json"
+            echo "Published $title as $tag"
+          done
+
+      - name: Delete the upload branch
+        run: |
+          git push --force-with-lease=upload:"$GITHUB_SHA" origin :upload \
+            || echo "upload branch moved (another upload landed); its own run will clean up"
+
+      - name: Redeploy the site
+        run: gh workflow run ota.yml --ref "$DEFAULT_BRANCH"
+
+  deploy:
+    if: github.ref != 'refs/heads/upload'
+    runs-on: ubuntu-latest
+    concurrency: ota-deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: List releases
+        run: gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp > "$RUNNER_TEMP/releases.json"
+
+      - name: Build site
+        run: python3 scripts/build_site.py "$RUNNER_TEMP/releases.json" _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

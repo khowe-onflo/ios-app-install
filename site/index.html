@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test Builds</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1a1d21; --muted: #667085; --line: #e4e7ec;
+    --accent: #0a6cff; --accent-text: #fff; --danger: #d92d20; --warn-bg: #fff4e5; --warn: #9a5b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #98a2b3; --line: #2a2f37;
+      --accent: #4c94ff; --danger: #f97066; --warn-bg: #2d2210; --warn: #f5b74f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 17px; margin: 0; }
+  a { color: var(--accent); }
+  button, .btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    font: inherit; font-weight: 500; text-decoration: none; cursor: pointer;
+  }
+  .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .danger { color: var(--danger); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .build.focus { border-color: var(--accent); }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .sub, .meta, .muted { color: var(--muted); }
+  .sub { margin: 2px 0 0; font-size: 14px; word-break: break-all; }
+  .meta { margin: 10px 0 12px; font-size: 13px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); white-space: nowrap; }
+  .warn { background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 8px; font-size: 13px; margin: 0 0 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .qr { margin-top: 12px; text-align: center; }
+  .qr img, .qr canvas { display: inline-block; background: #fff; padding: 10px; border-radius: 8px; }
+  .qr p { font-size: 13px; color: var(--muted); }
+  body:not(.admin) .admin-only { display: none !important; }
+  #manage .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  #manage input[type=password] { flex: 1; min-width: 200px; padding: 8px 10px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  .drop { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px;
+          text-align: center; cursor: pointer; color: var(--muted); }
+  .drop.over { border-color: var(--accent); color: var(--accent); }
+  #status { min-height: 1.4em; margin: 12px 0 0; font-size: 14px; }
+  #status.error { color: var(--danger); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">Test Builds</h1>
+    <button id="manage-toggle">Manage</button>
+  </header>
+
+  <section id="manage" class="card" hidden>
+    <div class="row">
+      <input id="token" type="password" autocomplete="off" placeholder="GitHub token (fine-grained, this repo only)">
+      <button id="save-token">Save</button>
+      <button id="forget-token">Forget</button>
+    </div>
+    <label id="drop" class="drop admin-only">
+      <input id="file" type="file" accept=".ipa" hidden>
+      <strong>Drop an .ipa here</strong> or click to choose (max 100 MB)
+    </label>
+    <p id="status"></p>
+  </section>
+
+  <p id="filter-note" class="muted" hidden>Showing one build. <a href="./">Show all builds</a></p>
+  <main id="builds"><p class="empty">Loading…</p></main>
+</div>
+
+<script>
+const TOKEN_KEY = "ota-gh-token";
+const API = "https://api.github.com";
+const MAX_BYTES = 100 * 1024 * 1024; // git blob API limit
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const focusTag = new URLSearchParams(location.search).get("build");
+
+let config = { repo: "", branch: "main", builds: [] };
+let token = "";
+try { token = localStorage.getItem(TOKEN_KEY) || ""; } catch {}
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function fmtSize(bytes) {
+  return bytes > 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.round(bytes / 1e3)} KB`;
+}
+function fmtAgo(iso) {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+function pageLink(tag) { return `${location.origin}${location.pathname}?build=${encodeURIComponent(tag)}`; }
+function installLink(tag) {
+  const manifest = new URL(`manifests/${tag}.plist`, location.href).href;
+  return `itms-services://?action=download-manifest&url=${encodeURIComponent(manifest)}`;
+}
+
+function setStatus(html, isError = false) {
+  $("status").innerHTML = html;
+  $("status").className = isError ? "error" : "";
+}
+
+async function loadBuilds() {
+  const res = await fetch(`builds.json?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`builds.json: ${res.status}`);
+  config = await res.json();
+  if (config.repo) $("title").textContent = `${config.repo.split("/")[1]} builds`;
+  return config;
+}
+
+function warnings(b) {
+  const out = [];
+  if (b.signing === "app-store") out.push("This build is App Store–signed and can't be installed this way. Export it as Ad Hoc, Development or Enterprise.");
+  if (b.signing === "unsigned") out.push("This build has no provisioning profile and won't install.");
+  if (b.profile_expires && new Date(b.profile_expires) < new Date()) out.push("The provisioning profile has expired, so this build won't install or launch.");
+  return out.map((w) => `<p class="warn">${esc(w)}</p>`).join("");
+}
+
+function render() {
+  const list = focusTag ? config.builds.filter((b) => b.tag === focusTag) : config.builds;
+  $("filter-note").hidden = !focusTag;
+  if (!list.length) {
+    $("builds").innerHTML = `<p class="empty">${focusTag ? "That build was deleted or doesn't exist." : "No builds yet."}</p>`;
+    return;
+  }
+  $("builds").innerHTML = list.map((b) => {
+    const meta = [
+      `Uploaded ${fmtAgo(b.uploaded)}`,
+      fmtSize(b.size),
+      b.devices != null ? `${b.devices} device${b.devices === 1 ? "" : "s"}` : null,
+      b.profile_expires ? `profile expires ${new Date(b.profile_expires).toLocaleDateString()}` : null,
+      b.min_os ? `iOS ${b.min_os}+` : null,
+    ].filter(Boolean).join(" · ");
+    return `
+      <article class="card build${b.tag === focusTag ? " focus" : ""}" data-tag="${esc(b.tag)}">
+        <div class="head">
+          <div>
+            <h2>${esc(b.name)}</h2>
+            <p class="sub">${esc(b.version)} (${esc(b.build)}) · ${esc(b.bundle_id)}</p>
+          </div>
+          <span class="badge">${esc(b.signing || "unknown")}</span>
+        </div>
+        <p class="meta">${esc(meta)}</p>
+        ${warnings(b)}
+        <div class="actions">
+          <a class="btn primary" href="${esc(installLink(b.tag))}">Install</a>
+          <button data-act="qr">QR code</button>
+          <button data-act="copy">Copy link</button>
+          <button data-act="delete" class="danger admin-only">Delete</button>
+        </div>
+        <div class="qr" hidden></div>
+      </article>`;
+  }).join("");
+}
+
+// ---- GitHub API (only used by the owner, with their token) ----
+
+async function gh(path, { method = "GET", body, allow = [] } = {}) {
+  const res = await fetch(API + path, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok && !allow.includes(res.status)) {
+    throw new Error(`GitHub ${res.status}: ${data?.message || res.statusText}`);
+  }
+  return { status: res.status, data };
+}
+
+function readBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.slice(r.result.indexOf(",") + 1));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function upload(file) {
+  if (!token) return setStatus("Save a GitHub token first.", true);
+  if (!config.repo) return setStatus("builds.json has no repo — run the OTA workflow once first.", true);
+  if (!file.name.toLowerCase().endsWith(".ipa")) return setStatus("That isn't an .ipa file.", true);
+  if (file.size > MAX_BYTES) return setStatus(`${esc(file.name)} is ${fmtSize(file.size)}; GitHub's API limit is 100 MB.`, true);
+
+  const repo = config.repo;
+  try {
+    setStatus(`Uploading ${esc(file.name)} (${fmtSize(file.size)})…`);
+    // Stack onto the upload branch if a previous upload is still being processed, else start from the default branch.
+    const existing = await gh(`/repos/${repo}/git/ref/heads/upload`, { allow: [404] });
+    const parent = existing.status === 404
+      ? (await gh(`/repos/${repo}/git/ref/heads/${config.branch}`)).data.object.sha
+      : existing.data.object.sha;
+    const parentCommit = (await gh(`/repos/${repo}/git/commits/${parent}`)).data;
+
+    const blob = (await gh(`/repos/${repo}/git/blobs`, {
+      method: "POST", body: { content: await readBase64(file), encoding: "base64" },
+    })).data;
+    const safeName = `${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+    const tree = (await gh(`/repos/${repo}/git/trees`, {
+      method: "POST",
+      body: { base_tree: parentCommit.tree.sha, tree: [{ path: `uploads/${safeName}`, mode: "100644", type: "blob", sha: blob.sha }] },
+    })).data;
+    const commit = (await gh(`/repos/${repo}/git/commits`, {
+      method: "POST", body: { message: `Upload ${file.name}`, tree: tree.sha, parents: [parent] },
+    })).data;
+
+    if (existing.status === 404) {
+      await gh(`/repos/${repo}/git/refs`, { method: "POST", body: { ref: "refs/heads/upload", sha: commit.sha } });
+    } else {
+      await gh(`/repos/${repo}/git/refs/heads/upload`, { method: "PATCH", body: { sha: commit.sha } });
+    }
+
+    const tag = `build-${blob.sha.slice(0, 12)}`;
+    if (config.builds.some((b) => b.tag === tag)) {
+      return setStatus("This exact file is already published.");
+    }
+    await waitForBuild(tag, file.name);
+  } catch (err) {
+    setStatus(`Upload failed: ${esc(err.message)}. If another upload just finished, try again.`, true);
+  }
+}
+
+async function waitForBuild(tag, name) {
+  const actions = `<a href="https://github.com/${esc(config.repo)}/actions" target="_blank" rel="noopener">Actions</a>`;
+  const started = Date.now();
+  while (Date.now() - started < 10 * 60 * 1000) {
+    const secs = Math.round((Date.now() - started) / 1000);
+    setStatus(`Uploaded. Processing ${esc(name)} on GitHub… ${secs}s (usually 1–2 min, see ${actions})`);
+    await sleep(10000);
+    try {
+      await loadBuilds();
+      if (config.builds.some((b) => b.tag === tag)) {
+        render();
+        return setStatus(`${esc(name)} is live. <a href="${esc(pageLink(tag))}">Share link</a>`);
+      }
+    } catch {}
+  }
+  setStatus(`Not live after 10 minutes. Check ${actions} for errors.`, true);
+}
+
+async function deleteBuild(build) {
+  if (!confirm(`Delete ${build.name} ${build.version} (${build.build})? Install links for it will stop working.`)) return;
+  const repo = config.repo;
+  try {
+    setStatus(`Deleting ${esc(build.name)}…`);
+    await gh(`/repos/${repo}/releases/${build.release_id}`, { method: "DELETE", allow: [404] });
+    await gh(`/repos/${repo}/git/refs/tags/${build.tag}`, { method: "DELETE", allow: [404, 422] });
+    await gh(`/repos/${repo}/actions/workflows/ota.yml/dispatches`, { method: "POST", body: { ref: config.branch } });
+    config.builds = config.builds.filter((b) => b.tag !== build.tag);
+    render();
+    setStatus("Deleted. The site refreshes in a minute or two.");
+  } catch (err) {
+    setStatus(`Delete failed: ${esc(err.message)}`, true);
+  }
+}
+
+// ---- wiring ----
+
+function applyToken() {
+  document.body.classList.toggle("admin", !!token);
+  $("token").value = token ? "••••••••" : "";
+}
+
+$("manage-toggle").onclick = () => { $("manage").hidden = !$("manage").hidden; };
+$("save-token").onclick = () => {
+  const v = $("token").value.trim();
+  if (!v || v.startsWith("•")) return;
+  token = v;
+  try { localStorage.setItem(TOKEN_KEY, token); } catch {}
+  applyToken();
+  setStatus("Token saved in this browser.");
+};
+$("forget-token").onclick = () => {
+  token = "";
+  try { localStorage.removeItem(TOKEN_KEY); } catch {}
+  applyToken();
+  setStatus("Token removed from this browser.");
+};
+
+$("file").onchange = (e) => { if (e.target.files[0]) upload(e.target.files[0]); e.target.value = ""; };
+const drop = $("drop");
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+};
+
+$("builds").onclick = async (e) => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const card = btn.closest(".build");
+  const build = config.builds.find((b) => b.tag === card.dataset.tag);
+  if (btn.dataset.act === "qr") {
+    const box = card.querySelector(".qr");
+    if (!box.hidden) { box.hidden = true; return; }
+    box.innerHTML = "";
+    new QRCode(box, { text: pageLink(build.tag), width: 180, height: 180 });
+    box.insertAdjacentHTML("beforeend", "<p>Scan with the iPhone camera, then tap Install in Safari.</p>");
+    box.hidden = false;
+  } else if (btn.dataset.act === "copy") {
+    await navigator.clipboard.writeText(pageLink(build.tag));
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = "Copy link"), 1500);
+  } else if (btn.dataset.act === "delete") {
+    deleteBuild(build);
+  }
+};
+
+applyToken();
+if (!isIOS) document.title += " — open on iPhone to install";
+loadBuilds().then(render).catch((err) => {
+  $("builds").innerHTML = `<p class="empty">Couldn't load builds (${esc(err.message)}).</p>`;
+});
+</script>
+</body>
+</html>
